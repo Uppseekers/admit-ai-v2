@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
-import os  # Added for file checking
+import os
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.pagesizes import A4
@@ -10,7 +10,6 @@ from reportlab.lib import colors
 # ─────────────────────────────────────────────
 # 1. APP CONFIG & STYLING
 # ─────────────────────────────────────────────
-# Note: Ensure "Uppseekers Logo.png" exists or remove page_icon
 st.set_page_config(page_title="Uppseekers Admit AI", page_icon="Uppseekers Logo.png", layout="centered")
 
 def apply_styles():
@@ -22,50 +21,50 @@ def apply_styles():
     """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-# 2. DATA LOADERS
+# 2. DATA LOADERS (With .strip() logic)
 # ─────────────────────────────────────────────
 def load_data():
     try:
         xls = pd.ExcelFile("University Readiness_new.xlsx")
         idx = xls.parse(xls.sheet_names[0])
-        # .strip() handles accidental spaces in Excel
+        # Cleaning keys and values to avoid KeyError
         mapping = {str(k).strip(): str(v).strip() for k, v in zip(idx.iloc[:,0], idx.iloc[:,1])}
         return xls, mapping
     except Exception as e:
-        st.error(f"Error loading University Readiness: {e}")
+        st.error(f"Missing or Invalid File: University Readiness_new.xlsx ({e})")
         st.stop()
 
 def load_benchmarking():
     try:
         bxls = pd.ExcelFile("Benchmarking_USA.xlsx")
         idx = bxls.parse(bxls.sheet_names[0])
-        # .strip() handles accidental spaces in Excel
+        # Cleaning keys and values to avoid KeyError
         mapping = {str(k).strip(): str(v).strip() for k, v in zip(idx.iloc[:,0], idx.iloc[:,1])}
         return bxls, mapping
     except Exception as e:
-        st.error(f"Error loading Benchmarking: {e}")
+        st.error(f"Missing or Invalid File: Benchmarking_USA.xlsx ({e})")
         st.stop()
 
 # ─────────────────────────────────────────────
-# 3. PDF GENERATION
+# 3. PDF GENERATION (Resilient Version)
 # ─────────────────────────────────────────────
-def generate_pdf(name, s_class, course, score, responses, bench_df, q_bench, countries, counsellor):
+def generate_pdf(name, s_class, course, score, responses, bench_df, countries, counsellor):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
     styles = getSampleStyleSheet()
     elements = []
 
-    # Safe Logo Logic
+    # Safe Logo Check
     logo_path = "Uppseekers Logo.png"
     if os.path.exists(logo_path):
         try:
             elements.append(Image(logo_path, width=140, height=42))
-        except:
-            elements.append(Paragraph("<b>Uppseekers Admit AI</b>", styles['Heading1']))
+            elements.append(Spacer(1, 15))
+        except: pass
     else:
-        elements.append(Paragraph("<b>Uppseekers Admit AI</b>", styles['Heading1']))
-    
-    elements.append(Spacer(1, 15))
+        elements.append(Paragraph("<b>UPPSEEKERS ADMIT AI</b>", styles['Heading1']))
+        elements.append(Spacer(1, 15))
+
     elements.append(Paragraph(f"Admit AI Analysis: {name}", styles['Title']))
     elements.append(Paragraph(f"<b>Class:</b> {s_class} | <b>Course:</b> {course} | <b>Counsellor:</b> {counsellor}", styles['Normal']))
     elements.append(Spacer(1, 15))
@@ -85,6 +84,7 @@ def generate_pdf(name, s_class, course, score, responses, bench_df, q_bench, cou
 
     for country in countries:
         elements.append(Paragraph(f"Country: {country}", styles['Heading3']))
+        # Filter by country if column exists
         c_df = bench_df[bench_df["Country"] == country] if "Country" in bench_df.columns else bench_df
         
         safe = c_df[c_df["Score Gap %"] >= -2]
@@ -112,20 +112,22 @@ if st.session_state.page == 'intro':
         st.markdown('<div class="card">', unsafe_allow_html=True)
         name = st.text_input("Student Name")
         country_list = ["USA", "UK", "Canada", "Singapore", "Australia", "Europe"]
-        pref_countries = st.multiselect("Preferred Countries (Select 3)", country_list, max_selections=3)
+        pref_countries = st.multiselect("Preferred Countries (Select up to 3)", country_list, max_selections=3)
         xls, s_map = load_data()
         course = st.selectbox("Interested Course", list(s_map.keys()))
+        
         if st.button("Start Analysis"):
             if name and pref_countries:
-                st.session_state.update({"name": name, "course": course, "countries": pref_countries, "s_map": s_map, "page": 'questions'})
+                st.session_state.update({"name": name, "course": course.strip(), "countries": pref_countries, "s_map": s_map, "page": 'questions'})
                 st.rerun()
             else:
-                st.warning("Please fill in all details.")
+                st.warning("Please enter your name and select at least one country.")
         st.markdown('</div>', unsafe_allow_html=True)
 
 elif st.session_state.page == 'questions':
     xls, _ = load_data()
-    df = xls.parse(st.session_state.s_map[st.session_state.course])
+    course_sheet = st.session_state.s_map[st.session_state.course]
+    df = xls.parse(course_sheet)
     total_score, responses = 0, []
     
     for idx, row in df.iterrows():
@@ -142,7 +144,7 @@ elif st.session_state.page == 'questions':
     
     if st.button("Generate My Report"):
         bxls, b_map = load_benchmarking()
-        course_key = st.session_state.course.strip()
+        course_key = st.session_state.course
         
         if course_key in b_map:
             bench = bxls.parse(b_map[course_key])
@@ -150,15 +152,25 @@ elif st.session_state.page == 'questions':
             st.session_state.update({"total_score": total_score, "responses": responses, "bench_df": bench, "page": 'counsellor'})
             st.rerun()
         else:
-            st.error(f"Course '{course_key}' not found in Benchmarking file mapping.")
+            st.error(f"Mapping Error: The course '{course_key}' does not have a corresponding sheet in the Benchmarking file.")
 
 elif st.session_state.page == 'counsellor':
     st.title("🛡️ Authorization")
     c_name = st.text_input("Counsellor Name")
     c_code = st.text_input("Access Pin", type="password")
+    
     if st.button("Download 9-List Report"):
         if c_code == "304":
-            pdf = generate_pdf(st.session_state.name, "12", st.session_state.course, st.session_state.total_score, st.session_state.responses, st.session_state.bench_df, {}, st.session_state.countries, c_name)
-            st.download_button("📥 Get PDF Report", data=pdf, file_name=f"{st.session_state.name}_AdmitAI_Report.pdf")
+            pdf = generate_pdf(
+                st.session_state.name, "12", st.session_state.course, 
+                st.session_state.total_score, st.session_state.responses, 
+                st.session_state.bench_df, st.session_state.countries, c_name
+            )
+            st.download_button(
+                label="📥 Get PDF Report",
+                data=pdf,
+                file_name=f"{st.session_state.name.replace(' ', '_')}_AdmitAI_Report.pdf",
+                mime="application/pdf"
+            )
         else:
             st.error("Incorrect Pin")
