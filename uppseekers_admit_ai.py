@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
+import os  # Added for file checking
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.pagesizes import A4
@@ -9,6 +10,7 @@ from reportlab.lib import colors
 # ─────────────────────────────────────────────
 # 1. APP CONFIG & STYLING
 # ─────────────────────────────────────────────
+# Note: Ensure "Uppseekers Logo.png" exists or remove page_icon
 st.set_page_config(page_title="Uppseekers Admit AI", page_icon="Uppseekers Logo.png", layout="centered")
 
 def apply_styles():
@@ -26,22 +28,26 @@ def load_data():
     try:
         xls = pd.ExcelFile("University Readiness_new.xlsx")
         idx = xls.parse(xls.sheet_names[0])
-        return xls, dict(zip(idx.iloc[:,0], idx.iloc[:,1]))
-    except:
-        st.error("Missing: University Readiness_new.xlsx")
+        # .strip() handles accidental spaces in Excel
+        mapping = {str(k).strip(): str(v).strip() for k, v in zip(idx.iloc[:,0], idx.iloc[:,1])}
+        return xls, mapping
+    except Exception as e:
+        st.error(f"Error loading University Readiness: {e}")
         st.stop()
 
 def load_benchmarking():
     try:
         bxls = pd.ExcelFile("Benchmarking_USA.xlsx")
         idx = bxls.parse(bxls.sheet_names[0])
-        return bxls, dict(zip(idx.iloc[:,0], idx.iloc[:,1]))
-    except:
-        st.error("Missing: Benchmarking_USA.xlsx")
+        # .strip() handles accidental spaces in Excel
+        mapping = {str(k).strip(): str(v).strip() for k, v in zip(idx.iloc[:,0], idx.iloc[:,1])}
+        return bxls, mapping
+    except Exception as e:
+        st.error(f"Error loading Benchmarking: {e}")
         st.stop()
 
 # ─────────────────────────────────────────────
-# 3. PDF GENERATION (9-LIST LOGIC)
+# 3. PDF GENERATION
 # ─────────────────────────────────────────────
 def generate_pdf(name, s_class, course, score, responses, bench_df, q_bench, countries, counsellor):
     buffer = io.BytesIO()
@@ -49,12 +55,17 @@ def generate_pdf(name, s_class, course, score, responses, bench_df, q_bench, cou
     styles = getSampleStyleSheet()
     elements = []
 
-    # Logo & Header
-    try:
-        elements.append(Image("Uppseekers Logo.png", width=140, height=42))
-        elements.append(Spacer(1, 15))
-    except: pass
-
+    # Safe Logo Logic
+    logo_path = "Uppseekers Logo.png"
+    if os.path.exists(logo_path):
+        try:
+            elements.append(Image(logo_path, width=140, height=42))
+        except:
+            elements.append(Paragraph("<b>Uppseekers Admit AI</b>", styles['Heading1']))
+    else:
+        elements.append(Paragraph("<b>Uppseekers Admit AI</b>", styles['Heading1']))
+    
+    elements.append(Spacer(1, 15))
     elements.append(Paragraph(f"Admit AI Analysis: {name}", styles['Title']))
     elements.append(Paragraph(f"<b>Class:</b> {s_class} | <b>Course:</b> {course} | <b>Counsellor:</b> {counsellor}", styles['Normal']))
     elements.append(Spacer(1, 15))
@@ -72,12 +83,10 @@ def generate_pdf(name, s_class, course, score, responses, bench_df, q_bench, cou
             elements.append(ut)
             elements.append(Spacer(1, 12))
 
-    # Generate 9 Lists (3 Categories x 3 Countries)
     for country in countries:
         elements.append(Paragraph(f"Country: {country}", styles['Heading3']))
         c_df = bench_df[bench_df["Country"] == country] if "Country" in bench_df.columns else bench_df
         
-        # Continuous Bucket Logic: ensures every university belongs to a list
         safe = c_df[c_df["Score Gap %"] >= -2]
         target = c_df[(c_df["Score Gap %"] < -2) & (c_df["Score Gap %"] >= -15)]
         dream = c_df[c_df["Score Gap %"] < -15]
@@ -110,6 +119,8 @@ if st.session_state.page == 'intro':
             if name and pref_countries:
                 st.session_state.update({"name": name, "course": course, "countries": pref_countries, "s_map": s_map, "page": 'questions'})
                 st.rerun()
+            else:
+                st.warning("Please fill in all details.")
         st.markdown('</div>', unsafe_allow_html=True)
 
 elif st.session_state.page == 'questions':
@@ -131,10 +142,15 @@ elif st.session_state.page == 'questions':
     
     if st.button("Generate My Report"):
         bxls, b_map = load_benchmarking()
-        bench = bxls.parse(b_map[st.session_state.course])
-        bench["Score Gap %"] = ((total_score - bench["Total Benchmark Score"]) / bench["Total Benchmark Score"]) * 100
-        st.session_state.update({"total_score": total_score, "responses": responses, "bench_df": bench, "page": 'counsellor'})
-        st.rerun()
+        course_key = st.session_state.course.strip()
+        
+        if course_key in b_map:
+            bench = bxls.parse(b_map[course_key])
+            bench["Score Gap %"] = ((total_score - bench["Total Benchmark Score"]) / bench["Total Benchmark Score"]) * 100
+            st.session_state.update({"total_score": total_score, "responses": responses, "bench_df": bench, "page": 'counsellor'})
+            st.rerun()
+        else:
+            st.error(f"Course '{course_key}' not found in Benchmarking file mapping.")
 
 elif st.session_state.page == 'counsellor':
     st.title("🛡️ Authorization")
@@ -143,4 +159,6 @@ elif st.session_state.page == 'counsellor':
     if st.button("Download 9-List Report"):
         if c_code == "304":
             pdf = generate_pdf(st.session_state.name, "12", st.session_state.course, st.session_state.total_score, st.session_state.responses, st.session_state.bench_df, {}, st.session_state.countries, c_name)
-            st.download_button("📥 Get PDF Report", data=pdf, file_name="AdmitAI_Report.pdf")
+            st.download_button("📥 Get PDF Report", data=pdf, file_name=f"{st.session_state.name}_AdmitAI_Report.pdf")
+        else:
+            st.error("Incorrect Pin")
