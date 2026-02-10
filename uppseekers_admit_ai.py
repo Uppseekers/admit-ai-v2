@@ -18,6 +18,7 @@ def apply_styles():
         .stButton>button { width: 100%; border-radius: 8px; height: 3em; background-color: #004aad; color: white; font-weight: bold; border: none; }
         .card { background-color: white; padding: 15px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); border: 1px solid #eee; margin-bottom: 10px; }
         .score-box { background-color: #f0f2f6; padding: 8px; border-radius: 8px; text-align: center; border: 1px solid #d1d5db; }
+        .improvement-text { color: #2e7d32; font-weight: bold; font-size: 0.85em; }
         </style>
     """, unsafe_allow_html=True)
 
@@ -47,7 +48,6 @@ def generate_pdf(name, baseline, strategic, bench_df, countries, counsellor, cou
     styles = getSampleStyleSheet()
     elements = []
 
-    # Header
     logo_path = "Uppseekers Logo.png"
     if os.path.exists(logo_path):
         try: elements.append(Image(logo_path, width=120, height=36))
@@ -57,7 +57,6 @@ def generate_pdf(name, baseline, strategic, bench_df, countries, counsellor, cou
     elements.append(Paragraph(f"<b>Course:</b> {course_name} | <b>Counsellor:</b> {counsellor}", styles['Normal']))
     elements.append(Spacer(1, 10))
     
-    # Score Summary Table
     summary_data = [
         ["Profile Status", "Total Score", "Improvement"],
         ["Baseline (Current)", str(baseline), "-"],
@@ -79,17 +78,13 @@ def generate_pdf(name, baseline, strategic, bench_df, countries, counsellor, cou
             ut.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0), color), ('TEXTCOLOR',(0,0),(-1,0), colors.whitesmoke), ('GRID',(0,0),(-1,-1),0.5,colors.black)]))
             elements.append(ut); elements.append(Spacer(1, 12))
 
-    # Dynamic Country Lists based on Strategic Score
     for country in countries:
         elements.append(Paragraph(f"Country Targets: {country}", styles['Heading2']))
         c_df = bench_df[bench_df["Country"] == country].copy() if "Country" in bench_df.columns else bench_df.copy()
         c_df["diff"] = c_df["Total Benchmark Score"] - strategic
         
-        # 1. Safe to Target
         add_table(c_df[c_df["diff"] <= 0].sort_values("Total Benchmark Score", ascending=False), "Safe to Target", colors.darkgreen, 5)
-        # 2. Strengthening Required
         add_table(c_df[(c_df["diff"] > 0) & (c_df["diff"] <= 15)].sort_values("Total Benchmark Score"), "Strengthening Required", colors.orange, 10)
-        # 3. Significant Gap
         add_table(c_df[(c_df["diff"] > 15) & (c_df["diff"] <= 30)].sort_values("Total Benchmark Score"), "Significant Gap", colors.red, 10)
 
     doc.build(elements)
@@ -109,14 +104,13 @@ if st.session_state.page == 'intro':
     with st.container():
         st.markdown('<div class="card">', unsafe_allow_html=True)
         name = st.text_input("Student Name")
-        countries = st.multiselect("Preferred Countries (Max 3)", ["USA", "UK", "Canada", "Singapore", "Australia", "Europe"], max_selections=3)
+        countries = st.multiselect("Preferred Countries", ["USA", "UK", "Canada", "Singapore", "Australia", "Europe"], max_selections=3)
         xls, s_map = load_data()
         course = st.selectbox("Interested Course", list(s_map.keys()))
         if st.button("Start Analysis"):
             if name and countries:
                 st.session_state.update({"name": name, "course": course, "countries": countries, "s_map": s_map, "page": 'analysis'})
                 st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
 
 elif st.session_state.page == 'analysis':
     xls, _ = load_data()
@@ -125,7 +119,7 @@ elif st.session_state.page == 'analysis':
     bench_master = bxls.parse(b_map[st.session_state.course])
 
     st.title(f"Strategic Session: {st.session_state.name}")
-    col_q, col_dash = st.columns([2, 1])
+    col_q, col_dash = st.columns([2, 1.2])
 
     with col_q:
         current_score = 0
@@ -162,13 +156,35 @@ elif st.session_state.page == 'analysis':
             s1.metric("Current Score", current_score)
 
         st.divider()
+        
         for country in st.session_state.countries:
             with st.expander(f"📍 {country} Targets", expanded=True):
                 c_df = bench_master[bench_master["Country"] == country].copy() if "Country" in bench_master.columns else bench_master.copy()
-                c_df["diff"] = c_df["Total Benchmark Score"] - current_score
-                st.write(f"✅ **Safe to Target:** {len(c_df[c_df['diff'] <= 0])}")
-                st.write(f"💡 **Strengthening Req:** {len(c_df[(c_df['diff'] > 0) & (c_df['diff'] <= 15)])}")
-                st.write(f"⚠️ **Significant Gap:** {len(c_df[(c_df['diff'] > 15) & (c_df['diff'] <= 30)])}")
+                
+                # Logic for current (strategic) score
+                c_df["diff_strat"] = c_df["Total Benchmark Score"] - current_score
+                st_now = len(c_df[c_df['diff_strat'] <= 0])
+                sr_now = len(c_df[(c_df['diff_strat'] > 0) & (c_df['diff_strat'] <= 15)])
+                sg_now = len(c_df[(c_df['diff_strat'] > 15) & (c_df['diff_strat'] <= 30)])
+
+                # Logic for baseline (if exists)
+                if st.session_state.baseline_score is not None:
+                    c_df["diff_base"] = c_df["Total Benchmark Score"] - st.session_state.baseline_score
+                    st_base = len(c_df[c_df['diff_base'] <= 0])
+                    
+                    # UI for Improvement
+                    st.write(f"✅ **Safe to Target:** {st_now} " + (f"*(Was {st_base})*" if st_now > st_base else ""))
+                    if st_now > st_base:
+                        st.markdown(f'<span class="improvement-text">⬆ Increased options by {st_now - st_base} universities</span>', unsafe_allow_html=True)
+                else:
+                    st.write(f"✅ **Safe to Target:** {st_now}")
+                
+                st.write(f"💡 **Strengthening Req:** {sr_now}")
+                st.write(f"⚠️ **Significant Gap:** {sg_now}")
+                
+                # Visual success bar
+                progress = min(max(current_score / 100, 0.0), 1.0)
+                st.progress(progress)
 
         if st.session_state.baseline_score is not None:
             st.divider()
@@ -176,20 +192,7 @@ elif st.session_state.page == 'analysis':
             pin = st.text_input("Access Pin", type="password")
             if st.button("Step 2: Authenticate & Prepare Report"):
                 if pin == "304":
-                    pdf_output = generate_pdf(
-                        st.session_state.name, 
-                        st.session_state.baseline_score, 
-                        current_score, 
-                        bench_master, 
-                        st.session_state.countries, 
-                        c_name,
-                        st.session_state.course
-                    )
-                    st.download_button(
-                        label="📥 Download Strategic Report",
-                        data=pdf_output,
-                        file_name=f"{st.session_state.name}_Strategy_Report.pdf",
-                        mime="application/pdf"
-                    )
+                    pdf_output = generate_pdf(st.session_state.name, st.session_state.baseline_score, current_score, bench_master, st.session_state.countries, c_name, st.session_state.course)
+                    st.download_button(label="📥 Download Strategic Report", data=pdf_output, file_name=f"{st.session_state.name}_Strategy.pdf", mime="application/pdf")
                 else:
                     st.error("Incorrect Pin")
