@@ -21,93 +21,130 @@ def apply_styles():
         .roadmap-month { border-left: 3px solid #004aad; padding-left: 15px; margin-bottom: 12px; }
         .month-header { font-weight: bold; color: #004aad; font-size: 1.1em; }
         .grade-tag { background: #e8f0fe; color: #1967d2; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; margin-left: 10px; }
-        .activity-item { font-size: 0.9em; margin-top: 4px; color: #444; }
-        .gap-jump-box { background: #fff3e0; border: 1px solid #ffb74d; padding: 10px; border-radius: 8px; text-align: center; }
+        .activity-item { font-size: 0.9em; margin-top: 4px; }
         </style>
     """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
 # 2. DATA LOADERS
 # ─────────────────────────────────────────────
-def load_readiness():
+def load_data():
     try:
         xls = pd.ExcelFile("University Readiness_new.xlsx")
         idx = xls.parse(xls.sheet_names[0])
         return xls, {str(k).strip(): str(v).strip() for k, v in zip(idx.iloc[:,0], idx.iloc[:,1])}
-    except: st.error("Readiness File Missing"); st.stop()
+    except: st.stop()
 
 def load_benchmarking():
     try:
         bxls = pd.ExcelFile("Benchmarking_USA.xlsx")
         idx = bxls.parse(bxls.sheet_names[0])
         return bxls, {str(k).strip(): str(v).strip() for k, v in zip(idx.iloc[:,0], idx.iloc[:,1])}
-    except: st.error("Benchmarking File Missing"); st.stop()
+    except: st.stop()
 
 # ─────────────────────────────────────────────
-# 3. POWER ROADMAP ENGINE
+# 3. MASTER ROADMAP ENGINE
 # ─────────────────────────────────────────────
-def generate_power_roadmap(start_class, start_month, intake_year, course_name):
+def get_advanced_roadmap(start_class, start_month_name, intake_year, course_name):
     months_order = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
-    curr_m_idx = months_order.index(start_month)
-    curr_year, curr_class = datetime.datetime.now().year, int(start_class)
-    end_year, end_month_idx = intake_year - 1, 9 # Oct Deadline
+    curr_m_idx = months_order.index(start_month_name)
+    curr_year = datetime.datetime.now().year
+    curr_class = int(start_class)
     
-    # Load flows and contests
-    flows = {c: pd.read_csv(f"Class wise Tentative Flow .xlsx - Class {c}th.csv") for c in [9, 10, 11, 12] if os.path.exists(f"Class wise Tentative Flow .xlsx - Class {c}th.csv")}
+    # End goal: October of the year before intake
+    end_year = intake_year - 1
+    end_month_idx = 9 
     
-    c_file = "Olympiads.csv"
-    if "CS" in course_name.upper(): c_file = "STEM-Coding.csv"
-    elif "BUSINESS" in course_name.upper(): c_file = "Business and Entrepreneur.csv"
-    elif "FINANCE" in course_name.upper(): c_file = "Finance and Economics.csv"
-    df_exams = pd.read_csv(f"Undergrad - Contests_Olympiads for students.xlsx - {c_file}") if os.path.exists(f"Undergrad - Contests_Olympiads for students.xlsx - {c_file}") else None
+    # Load Class-wise Flow Sheets
+    flows = {}
+    for c in [9, 10, 11, 12]:
+        try: flows[c] = pd.read_csv(f"Class wise Tentative Flow .xlsx - Class {c}th.csv")
+        except: flows[c] = None
+
+    # Load Contest Sheets
+    contest_file = "Olympiads.csv"
+    if "CS" in course_name.upper() or "AI" in course_name.upper(): contest_file = "STEM-Coding.csv"
+    elif "BUSINESS" in course_name.upper(): contest_file = "Business and Entrepreneur.csv"
+    elif "FINANCE" in course_name.upper() or "ECON" in course_name.upper(): contest_file = "Finance and Economics.csv"
+    
+    try: df_exams = pd.read_csv(f"Undergrad - Contests_Olympiads for students.xlsx - {contest_file}")
+    except: df_exams = None
 
     master_plan = []
+    
+    # Generate Month-by-Month loop
     temp_y, temp_m, temp_c = curr_year, curr_m_idx, curr_class
-
     while (temp_y < end_year) or (temp_y == end_year and temp_m <= end_month_idx):
-        if temp_c > 12: break
-        m_label = months_order[temp_m]
-        month_entry = {"month": m_label, "year": temp_y, "grade": temp_c, "tasks": []}
+        if temp_c > 12: break # Cap at Grade 12
         
-        # 1. Integration: Class Flow
-        if temp_c in flows:
-            match = flows[temp_c][flows[temp_c]['Month'].str.contains(m_label[:3], na=False, case=False)]
-            for _, r in match.iterrows():
-                month_entry['tasks'].append(f"📍 {r.get('Task Name', 'Academic Focus')} - {r.get('Outcome ', 'Goal')}")
+        month_label = months_order[temp_m]
+        month_data = {"month": month_label, "year": temp_y, "grade": temp_c, "tasks": []}
+        
+        # 1. Pull from Class-wise Flow
+        if temp_c in flows and flows[temp_c] is not None:
+            flow_df = flows[temp_c]
+            # Match current month in the "Month" column of the CSV
+            matches = flow_df[flow_df['Month'].str.contains(month_label[:3], na=False, case=False)]
+            for _, row in matches.iterrows():
+                task = row.get('Task Name', row.get('Phase', 'Academic Focus'))
+                info = row.get('Additional Info', '')
+                month_data['tasks'].append(f"📌 {task} {f'({info})' if pd.notna(info) else ''}")
 
-        # 2. Integration: Contests (Strategic Spikes)
+        # 2. Pull Exams from Contest Sheets
         if df_exams is not None:
-            tests = df_exams[df_exams['Month (Test)'].str.contains(m_label[:3], na=False, case=False)]
-            for _, t in tests.iterrows():
-                month_entry['tasks'].append(f"🏆 PRIORITY EXAM: {t.iloc[0]} ({t.get('Impact in Admissions', 'High Impact')})")
+            regs = df_exams[df_exams['Month (Registration)'].str.contains(month_label[:3], na=False, case=False)]
+            for _, r in regs.iterrows(): month_data['tasks'].append(f"📝 Registration: {r.iloc[0]}")
+            
+            tests = df_exams[df_exams['Month (Test)'].str.contains(month_label[:3], na=False, case=False)]
+            for _, t in tests.iterrows(): month_data['tasks'].append(f"🏆 Exam Date: {t.iloc[0]}")
 
-        master_plan.append(month_entry)
+        # 3. Add Hard-coded Logic (Internships/Research)
+        if month_label in ["June", "July"]:
+            month_data['tasks'].append("💼 Strategic Internship Phase")
+        if temp_c == 11 and month_label == "January":
+            month_data['tasks'].append("🔬 Finalize Research Paper Topic")
+
+        master_plan.append(month_data)
+        
+        # Increment
         temp_m += 1
         if temp_m > 11:
-            temp_m, temp_y, temp_c = 0, temp_y + 1, temp_c + 1
+            temp_m = 0
+            temp_y += 1
+            temp_c += 1
             
     return master_plan
 
 # ─────────────────────────────────────────────
-# 4. PDF DOWNLOAD ENGINE
+# 4. PDF ENGINE
 # ─────────────────────────────────────────────
-def generate_pdf_report(name, baseline, strategic, roadmap, course):
+def generate_roadmap_pdf(name, course, roadmap):
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4)
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
     styles = getSampleStyleSheet()
     elements = []
 
-    elements.append(Paragraph(f"Strategic Roadmap: {name}", styles['Title']))
-    elements.append(Paragraph(f"Course: {course} | Strategy Gap Jump: +{strategic - baseline} Points", styles['Normal']))
-    elements.append(Spacer(1, 20))
+    elements.append(Paragraph(f"Ultimate Admissions Roadmap: {name}", styles['Title']))
+    elements.append(Paragraph(f"<b>Target Course:</b> {course}", styles['Normal']))
+    elements.append(Spacer(1, 15))
 
-    data = [["Month/Year", "Grade", "Strategic Actions"]]
+    # Roadmap Table
+    table_data = [["Month / Year", "Grade", "Strategic Actions & Milestones"]]
     for m in roadmap:
-        data.append([f"{m['month']} {m['year']}", f"G{m['grade']}", "\n".join(m['tasks']) if m['tasks'] else "Standard Prep"])
+        task_list = "\n".join(m['tasks']) if m['tasks'] else "General Profile Building"
+        table_data.append([f"{m['month']} {m['year']}", f"Grade {m['grade']}", task_list])
 
-    t = Table(data, colWidths=[90, 50, 380])
-    t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0), colors.HexColor("#004aad")), ('TEXTCOLOR',(0,0),(-1,0), colors.whitesmoke), ('GRID',(0,0),(-1,-1), 0.5, colors.grey), ('VALIGN',(0,0),(-1,-1), 'TOP'), ('FONTSIZE',(0,0),(-1,-1), 7)]))
-    elements.append(t)
+    rt = Table(table_data, colWidths=[90, 60, 380])
+    rt.setStyle(TableStyle([
+        ('BACKGROUND',(0,0),(-1,0), colors.HexColor("#004aad")),
+        ('TEXTCOLOR',(0,0),(-1,0), colors.whitesmoke),
+        ('GRID',(0,0),(-1,-1), 0.5, colors.grey),
+        ('VALIGN',(0,0),(-1,-1), 'TOP'),
+        ('FONTSIZE',(0,0),(-1,-1), 8),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+        ('TOPPADDING', (0,0), (-1,-1), 8),
+    ]))
+    elements.append(rt)
     doc.build(elements)
     buffer.seek(0)
     return buffer
@@ -125,20 +162,20 @@ if st.session_state.page == 'intro':
         st.markdown('<div class="card">', unsafe_allow_html=True)
         name = st.text_input("Student Name")
         countries = st.multiselect("Preferred Countries", ["USA", "UK", "Canada", "Singapore", "Australia"], max_selections=3)
-        xls, s_map = load_readiness()
+        xls, s_map = load_data()
         course = st.selectbox("Interested Course", list(s_map.keys()))
-        if st.button("Initialize Powerful Flow"):
+        if st.button("Initialize Strategy"):
             if name and countries:
                 st.session_state.update({"name": name, "course": course, "countries": countries, "s_map": s_map, "page": 'analysis'})
                 st.rerun()
 
 elif st.session_state.page == 'analysis':
-    xls, _ = load_readiness()
+    xls, _ = load_data()
     bxls, b_map = load_benchmarking()
     df_q = xls.parse(st.session_state.s_map[st.session_state.course])
     bench_master = bxls.parse(b_map[st.session_state.course])
 
-    st.title(f"Strategic Upward Movement: {st.session_state.name}")
+    st.title(f"Strategic Profile Builder: {st.session_state.name}")
     col_q, col_dash = st.columns([2, 1.2])
 
     with col_q:
@@ -157,44 +194,51 @@ elif st.session_state.page == 'analysis':
                 q_cols[1].markdown(f'<div class="score-box">Points<br><b>{pts}</b></div>', unsafe_allow_html=True)
 
     with col_dash:
-        # --- SCORE & GAP JUMP ---
-        st.subheader("🎯 Strategic Dashboard")
+        # --- SCORE TRACKER ---
+        st.subheader("🎯 Live Profile Tracker")
         if st.session_state.baseline_score is None:
-            if st.button("🔴 Step 1: Lock Baseline Status"):
+            if st.button("🔴 Step 1: Lock Baseline Score"):
                 st.session_state.baseline_score = current_score; st.rerun()
         else:
-            if st.button("🔄 Reset Strategy"):
+            if st.button("🔄 Reset Baseline"):
                 st.session_state.baseline_score = None; st.rerun()
 
+        m1, m2 = st.columns(2)
         if st.session_state.baseline_score is not None:
-            gap_jump = current_score - st.session_state.baseline_score
-            st.markdown(f'<div class="gap-jump-box"><b>GAP JUMP MOVEMENT</b><br><h2 style="margin:0;color:#e65100;">+{gap_jump} Points</h2></div>', unsafe_allow_html=True)
-            st.metric("Strategic Target Score", current_score, delta=f"+{gap_jump}")
+            m1.metric("Current Baseline", st.session_state.baseline_score)
+            m2.metric("Strategic Target", current_score, delta=current_score - st.session_state.baseline_score)
         else:
-            st.metric("Current Profile Power", current_score)
+            m1.metric("Current Score", current_score)
 
         st.divider()
 
         # --- ROADMAP ARCHITECT ---
         st.subheader("🚀 Roadmap Architect")
-        with st.expander("Configure Strategic Journey", expanded=True):
+        with st.expander("Generate Strategic Timeline", expanded=True):
             c_cl = st.selectbox("Current Grade", [9, 10, 11, 12], index=2)
             c_mo = st.selectbox("Current Month", ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"])
             i_yr = st.number_input("Intake Year", 2025, 2032, 2027)
             
-            roadmap = generate_power_roadmap(c_cl, c_mo, i_yr, st.session_state.course)
+            # Generate Roadmap in State
+            roadmap = get_advanced_roadmap(c_cl, c_mo, i_yr, st.session_state.course)
+            
+            # Display Live
             for m in roadmap:
                 if m['tasks']:
-                    st.markdown(f"""<div class="roadmap-month"><span class="month-header">{m['month']} {m['year']}</span><span class="grade-tag">G{m['grade']}</span>
-                        <div class="activity-item">{"<br>".join(m['tasks'])}</div></div>""", unsafe_allow_html=True)
+                    st.markdown(f"""<div class="roadmap-month">
+                        <span class="month-header">{m['month']} {m['year']}</span>
+                        <span class="grade-tag">Grade {m['grade']}</span>
+                        <div class="activity-item">{"<br>".join(m['tasks'])}</div>
+                    </div>""", unsafe_allow_html=True)
 
         # --- EXPORT ---
         if st.session_state.baseline_score is not None:
             st.divider()
             c_name = st.text_input("Counsellor Name")
             pin = st.text_input("Pin", type="password")
-            if st.button("Step 2: Generate Powerful Roadmap PDF"):
+            if st.button("Step 2: Generate & Download Full Roadmap"):
                 if pin == "304":
-                    pdf = generate_pdf_report(st.session_state.name, st.session_state.baseline_score, current_score, roadmap, st.session_state.course)
-                    st.download_button("📥 Download PDF", data=pdf, file_name=f"{st.session_state.name}_Strategic_Flow.pdf", mime="application/pdf")
-                else: st.error("Incorrect Pin")
+                    pdf = generate_roadmap_pdf(st.session_state.name, st.session_state.course, roadmap)
+                    st.download_button("📥 Download PDF Roadmap", data=pdf, file_name=f"{st.session_state.name}_Roadmap.pdf", mime="application/pdf")
+                else:
+                    st.error("Incorrect Pin")
