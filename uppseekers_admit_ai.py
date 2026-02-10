@@ -196,3 +196,90 @@ elif st.session_state.page == 'analysis':
                     st.download_button(label="📥 Download Strategic Report", data=pdf_output, file_name=f"{st.session_state.name}_Strategy.pdf", mime="application/pdf")
                 else:
                     st.error("Incorrect Pin")
+
+
+import datetime
+
+# ─────────────────────────────────────────────
+# 1. NEW ROADMAP LOGIC ENGINE
+# ─────────────────────────────────────────────
+def generate_roadmap_data(current_class, current_month, interest):
+    # Mapping months to numbers for calculation
+    months = ["January", "February", "March", "April", "May", "June", 
+              "July", "August", "September", "October", "November", "December"]
+    curr_m_idx = months.index(current_month)
+    
+    # Calculate months remaining until Grade 12 Oct (Application Season)
+    target_year = 12
+    years_left = target_year - int(current_class)
+    total_months_left = (years_left * 12) + (9 - curr_m_idx) # Until Oct of Grade 12
+    
+    roadmap = []
+    
+    # 1. Internships Logic
+    num_internships = 2 if years_left >= 2 else 1
+    
+    # 2. Research Paper & Apps
+    roadmap.append({"Activity": "Research Paper", "Timeline": "Next 6-8 Months", "Detail": "1 Deep-dive Research Project + Publication"})
+    roadmap.append({"Activity": "Application Phase", "Timeline": "Final 6 Months", "Detail": "SOP Writing, LOR Collection, Essay Editing"})
+
+    # 3. Dynamic Contest Selection (from your sheets)
+    try:
+        if "CS" in interest or "AI" in interest:
+            df_c = pd.read_csv("Undergrad - Contests_Olympiads for students.xlsx - STEM-Coding.csv")
+        elif "Business" in interest:
+            df_c = pd.read_csv("Undergrad - Contests_Olympiads for students.xlsx - Business and Entrepreneur.csv")
+        else:
+            df_c = pd.read_csv("Undergrad - Contests_Olympiads for students.xlsx - Finance and Economics.csv")
+        
+        suggested_contests = df_c.head(3)['Contest Name'].tolist()
+    except:
+        suggested_contests = ["Relevant International Olympiad", "Major Subject Contest"]
+
+    return {
+        "months_left": total_months_left,
+        "internships": num_internships,
+        "contests": suggested_contests,
+        "years_left": years_left
+    }
+
+# ─────────────────────────────────────────────
+# 2. UPDATED INTERFACE (Add to 'analysis' page)
+# ─────────────────────────────────────────────
+
+# Inside the 'analysis' page elif block, add a new tab or expander:
+with col_dash:
+    st.divider()
+    st.subheader("🚀 Roadmap Architect")
+    
+    with st.expander("Generate Admissions Roadmap", expanded=False):
+        c_class = st.selectbox("Current Class", [8, 9, 10, 11], index=2)
+        c_month = st.selectbox("Current Month", ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"])
+        
+        if st.button("Build My Roadmap"):
+            data = generate_roadmap_data(c_class, c_month, st.session_state.course)
+            
+            st.markdown("---")
+            st.info(f"📅 **Timeline:** {data['months_left']} months until applications.")
+            
+            # Use columns for a superb design layout
+            r1, r2 = st.columns(2)
+            r1.metric("Internships", data['internships'])
+            r2.metric("Research Papers", "1")
+            
+            st.markdown("### 🏆 Suggested Contests")
+            for c in data['contests']:
+                st.markdown(f"⭐ {c}")
+                
+            st.markdown("### 📚 Academic Growth")
+            mooc_count = 1 if c_class in [10, 12] else 2
+            st.write(f"• **MOOCs:** Complete {mooc_count} certifications this year.")
+            
+            st.markdown("### ✍️ The Final Stretch")
+            st.warning("Last 6 Months: Strictly for SOPs, LORs, and Application Portals.")
+
+# ─────────────────────────────────────────────
+# 3. PDF UPDATES
+# ─────────────────────────────────────────────
+# Ensure your generate_pdf function now accepts these roadmap parameters 
+# so they appear in the final printed document.
